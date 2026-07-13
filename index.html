@@ -164,7 +164,7 @@
 <div class="phone" id="phone">
 
   <div class="appbar">
-    <div class="version-badge" id="versionBadge">v1.5</div>
+    <div class="version-badge" id="versionBadge">v1.6</div>
     <div class="back" id="backBtn" onclick="goBack()">←</div>
     <div style="flex:1">
       <h1 id="screenTitle">Mal Kabul</h1>
@@ -829,7 +829,39 @@ function toast(msg){
   setTimeout(()=>t.remove(), 2600);
 }
 
-/* ================= ÇOKLU BARKOD KAMERA (dokunarak seç) ================= */
+/* ================= ÇOKLU BARKOD KAMERA (otomatik tanıma + düzeltme) ================= */
+
+/* --- Doğrulama yardımcıları --- */
+function luhnValid(num){
+  let sum=0, alt=false;
+  for(let i=num.length-1;i>=0;i--){
+    let d=parseInt(num[i],10);
+    if(alt){ d*=2; if(d>9) d-=9; }
+    sum+=d; alt=!alt;
+  }
+  return sum%10===0;
+}
+function ean13Valid(num){
+  let sum=0;
+  for(let i=0;i<12;i++) sum += parseInt(num[i],10) * (i%2===0?1:3);
+  return (10-(sum%10))%10 === parseInt(num[12],10);
+}
+function upcAValid(num){
+  let sum=0;
+  for(let i=0;i<11;i++) sum += parseInt(num[i],10) * (i%2===0?3:1);
+  return (10-(sum%10))%10 === parseInt(num[11],10);
+}
+// Barkod içeriğini sınıflandır: 'imei' | 'ean' | 'serial' | null
+function classifyCode(raw){
+  const v = raw.trim();
+  if(/^\d{15}$/.test(v)) return luhnValid(v) ? 'imei' : 'imei'; // 15 hane neredeyse kesin IMEI (Luhn tutmasa da EAN olamaz)
+  if(/^\d{13}$/.test(v) && ean13Valid(v)) return 'ean';
+  if(/^\d{12}$/.test(v) && upcAValid(v)) return 'ean';
+  if(/^\d{8}$/.test(v)) return 'ean'; // EAN-8
+  if(/^[A-Za-z0-9\-]{6,22}$/.test(v) && /[A-Za-z]/.test(v) && !v.includes('://')) return 'serial';
+  return null;
+}
+
 async function openCameraMultiScan(){
   if(!('BarcodeDetector' in window)){
     toast('Bu tarayıcı çoklu barkod taramayı desteklemiyor. Demo çipleri veya manuel giriş kullanın.');
@@ -845,12 +877,12 @@ async function openCameraMultiScan(){
     const canvas = document.createElement('canvas');
     canvas.style.cssText='position:absolute;inset:0;width:100%;height:100%;touch-action:none;';
     const hint = document.createElement('div');
-    hint.style.cssText='position:absolute;top:16px;left:0;right:0;text-align:center;color:#fff;font-family:var(--mono);font-size:12.5px;text-shadow:0 1px 4px #000;padding:0 16px;';
-    hint.textContent = 'Sarı kutulara dokunun — 1: EAN, 2: IMEI1, 3: IMEI2 — Basılı tutun: Seri No';
+    hint.style.cssText='position:absolute;top:14px;left:0;right:0;text-align:center;color:#fff;font-family:var(--mono);font-size:12px;text-shadow:0 1px 4px #000;padding:0 16px;';
+    hint.textContent = 'Barkodları kadraja alın — EAN ve IMEI otomatik tanınır';
     const panel = document.createElement('div');
-    panel.style.cssText='position:absolute;left:0;right:0;bottom:0;background:#1a1e24ee;padding:12px 14px 16px;border-top:1px solid #2a3038;';
+    panel.style.cssText='position:absolute;left:0;right:0;bottom:0;background:#12151acc;padding:10px 12px 14px;border-top:1px solid #2a3038;backdrop-filter:blur(6px);';
     panel.innerHTML = `
-      <div id="msChips" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;min-height:26px;"></div>
+      <div id="msSlots" style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px;"></div>
       <div style="display:flex;gap:8px;">
         <button id="msCancel" style="flex:1;padding:13px;border-radius:10px;border:1px solid #2a3038;background:#222831;color:#e9ecef;font-weight:700;">İptal</button>
         <button id="msDone" style="flex:2;padding:13px;border-radius:10px;border:none;background:#ff6a1a;color:#1a0d05;font-weight:800;">✔ Bitti — Kaydet</button>
@@ -860,14 +892,36 @@ async function openCameraMultiScan(){
     await video.play();
 
     const detector = new BarcodeDetector();
-    let lastBoxes = [];
     const assigned = { ean:null, imei1:null, imei2:null, serial:null };
-    let tapCount = 0;
+    let selectedSlot = null; // düzeltme için seçilen slot
     let stopped = false;
+    // İzleme: rawValue -> {box:{x,y,w,h}, lastSeen}
+    const tracked = new Map();
 
-    function resizeCanvas(){ canvas.width = video.videoWidth || 1280; canvas.height = video.videoHeight || 720; }
+    function resizeCanvas(){
+      canvas.width = wrap.clientWidth;
+      canvas.height = wrap.clientHeight - panel.offsetHeight;
+      canvas.style.height = canvas.height + 'px';
+    }
     video.addEventListener('loadedmetadata', resizeCanvas);
-    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
+    setTimeout(resizeCanvas, 60);
+
+    // object-fit:contain koordinat eşlemesi — kutuların yerinin kaymasını düzeltir
+    function videoToScreen(x, y){
+      const vw = video.videoWidth || 1, vh = video.videoHeight || 1;
+      const dw = canvas.width, dh = wrap.clientHeight; // video tüm ekranı kaplıyor (contain)
+      const scale = Math.min(dw/vw, dh/vh);
+      const offX = (dw - vw*scale)/2, offY = (dh - vh*scale)/2;
+      return { x: x*scale + offX, y: y*scale + offY, scale };
+    }
+    function screenToVideo(sx, sy){
+      const vw = video.videoWidth || 1, vh = video.videoHeight || 1;
+      const dw = canvas.width, dh = wrap.clientHeight;
+      const scale = Math.min(dw/vw, dh/vh);
+      const offX = (dw - vw*scale)/2, offY = (dh - vh*scale)/2;
+      return { x:(sx-offX)/scale, y:(sy-offY)/scale };
+    }
 
     const roleColor = r => ({ ean:'#2ea043', imei1:'#4c9be8', imei2:'#ff6a1a', serial:'#a855f7' }[r] || '#e6a417');
     const roleLabel = r => ({ ean:'EAN', imei1:'IMEI 1', imei2:'IMEI 2', serial:'SERİ NO' }[r] || '');
@@ -875,85 +929,140 @@ async function openCameraMultiScan(){
       for(const r of ['ean','imei1','imei2','serial']) if(assigned[r]===rawValue) return r;
       return null;
     }
-    function renderChips(){
-      const chipsEl = document.getElementById('msChips');
-      if(!chipsEl) return;
-      const filled = ['ean','imei1','imei2','serial'].filter(r=>assigned[r]);
-      chipsEl.innerHTML = filled.length ? filled.map(r=>
-        `<span style="background:${roleColor(r)}22;border:1px solid ${roleColor(r)};color:${roleColor(r)};padding:5px 10px;border-radius:20px;font-size:11px;font-family:var(--mono);">${roleLabel(r)}: ${assigned[r]}</span>`
-      ).join('') : '<span style="color:#8a929c;font-size:11.5px;">Henüz barkod seçilmedi</span>';
+
+    // Otomatik yerleştirme
+    function autoAssign(rawValue){
+      if(findAssignedRole(rawValue)) return;
+      const cls = classifyCode(rawValue);
+      if(cls==='imei'){
+        if(selectedSlot==='imei1' || selectedSlot==='imei2'){ assigned[selectedSlot]=rawValue; selectedSlot=null; }
+        else if(!assigned.imei1) assigned.imei1 = rawValue;
+        else if(!assigned.imei2) assigned.imei2 = rawValue;
+      } else if(cls==='ean'){
+        if(selectedSlot==='ean'){ assigned.ean=rawValue; selectedSlot=null; }
+        else if(!assigned.ean) assigned.ean = rawValue;
+      } else if(cls==='serial'){
+        if(selectedSlot==='serial'){ assigned.serial=rawValue; selectedSlot=null; }
+        else if(!assigned.serial) assigned.serial = rawValue;
+      } else if(selectedSlot){
+        // sınıflandırılamayan kod, ama kullanıcı bir slot seçmiş — oraya yaz
+        assigned[selectedSlot]=rawValue; selectedSlot=null;
+      }
+      renderSlots();
     }
+
+    function renderSlots(){
+      const el = document.getElementById('msSlots');
+      if(!el) return;
+      el.innerHTML = ['ean','imei1','imei2','serial'].map(r=>{
+        const val = assigned[r];
+        const sel = selectedSlot===r;
+        const color = roleColor(r);
+        return `<button data-slot="${r}" style="
+          padding:9px 8px;border-radius:9px;font-family:var(--mono);font-size:10.5px;text-align:left;cursor:pointer;
+          background:${val ? color+'22' : '#1a1e24'};
+          border:${sel ? '2px solid #fff' : '1px '+(val?'solid '+color:'dashed #3a414b')};
+          color:${val ? color : '#8a929c'};">
+          <div style="font-weight:800;font-size:10px;letter-spacing:.5px;">${roleLabel(r)}${sel?' — OKUTUN/DÜZELTİN':''}</div>
+          <div style="margin-top:2px;word-break:break-all;">${val || '—'}</div>
+        </button>`;
+      }).join('');
+      el.querySelectorAll('button').forEach(b=>{
+        b.onclick = ()=>slotTapped(b.dataset.slot);
+      });
+    }
+
+    function slotTapped(slot){
+      if(assigned[slot]){
+        const yeni = prompt(roleLabel(slot)+' değerini düzeltin. Silip yeniden okutmak için alanı boşaltıp Tamam deyin:', assigned[slot]);
+        if(yeni===null) return; // vazgeçti
+        const v = yeni.trim();
+        if(v===''){ assigned[slot]=null; selectedSlot=slot; } // yeniden okutma modu
+        else assigned[slot]=v;
+      } else {
+        selectedSlot = (selectedSlot===slot) ? null : slot; // seç/bırak
+      }
+      renderSlots();
+    }
+
     function draw(){
       const ctx = canvas.getContext('2d');
       ctx.clearRect(0,0,canvas.width,canvas.height);
-      lastBoxes.forEach(b=>{
-        const role = findAssignedRole(b.rawValue);
+      const now = performance.now();
+      tracked.forEach((t, rawValue)=>{
+        if(now - t.lastSeen > 1500){ tracked.delete(rawValue); return; }
+        const p1 = videoToScreen(t.box.x, t.box.y);
+        const w = t.box.w * p1.scale, h = t.box.h * p1.scale;
+        const role = findAssignedRole(rawValue);
+        const cls = classifyCode(rawValue);
         const color = role ? roleColor(role) : '#e6a417';
-        ctx.strokeStyle = color; ctx.lineWidth = Math.max(3, canvas.width*0.004);
-        ctx.strokeRect(b.boundingBox.x, b.boundingBox.y, b.boundingBox.width, b.boundingBox.height);
+        const fresh = (now - t.lastSeen) < 600;
+        ctx.globalAlpha = fresh ? 1 : 0.45;
+        ctx.strokeStyle = color; ctx.lineWidth = 3;
+        ctx.strokeRect(p1.x, p1.y, w, h);
         ctx.fillStyle = color;
-        ctx.font = Math.max(16, canvas.width*0.022)+'px monospace';
-        ctx.fillText(role ? roleLabel(role) : '?', b.boundingBox.x, Math.max(18, b.boundingBox.y-6));
+        ctx.font = '700 13px monospace';
+        const label = role ? roleLabel(role)+' ✓' : (cls ? {imei:'IMEI?',ean:'EAN?',serial:'SERİ?'}[cls] : '?');
+        ctx.fillText(label, p1.x+2, Math.max(14, p1.y-5));
+        ctx.globalAlpha = 1;
       });
+      if(!stopped) requestAnimationFrame(draw);
     }
-    async function loop(){
+    requestAnimationFrame(draw);
+
+    async function detectLoop(){
       while(!stopped){
         try{
           const codes = await detector.detect(video);
-          lastBoxes = codes.map(c=>({rawValue:c.rawValue, boundingBox:c.boundingBox}));
-          draw();
+          const now = performance.now();
+          codes.forEach(c=>{
+            const bb = c.boundingBox;
+            const prev = tracked.get(c.rawValue);
+            if(prev){
+              // yumuşatma — kutu titremesini azaltır
+              prev.box.x = prev.box.x*0.6 + bb.x*0.4;
+              prev.box.y = prev.box.y*0.6 + bb.y*0.4;
+              prev.box.w = prev.box.w*0.6 + bb.width*0.4;
+              prev.box.h = prev.box.h*0.6 + bb.height*0.4;
+              prev.lastSeen = now;
+            } else {
+              tracked.set(c.rawValue, { box:{x:bb.x,y:bb.y,w:bb.width,h:bb.height}, lastSeen:now });
+            }
+            autoAssign(c.rawValue);
+          });
         }catch(e){}
-        await new Promise(r=>setTimeout(r,250));
+        await new Promise(r=>setTimeout(r,180));
       }
     }
-    loop();
+    detectLoop();
 
-    function hitTest(nx, ny){
-      for(const b of lastBoxes){
-        const bb=b.boundingBox;
-        if(nx>=bb.x && nx<=bb.x+bb.width && ny>=bb.y && ny<=bb.y+bb.height) return b;
-      }
-      return null;
-    }
-    function toNative(e){
-      const rect = canvas.getBoundingClientRect();
-      return { nx:(e.clientX-rect.left)*(canvas.width/rect.width), ny:(e.clientY-rect.top)*(canvas.height/rect.height) };
-    }
-
-    let pressTimer=null, longPressFired=false;
-    canvas.addEventListener('pointerdown', (e)=>{
-      const {nx,ny} = toNative(e);
-      longPressFired = false;
-      pressTimer = setTimeout(()=>{
-        longPressFired = true;
-        const hit = hitTest(nx,ny);
-        if(hit){ assigned.serial = hit.rawValue; renderChips(); draw(); if(navigator.vibrate) navigator.vibrate(30); }
-      }, 550);
-    });
+    // Ekrandaki kutuya dokunma: seçili slot varsa o değeri oraya ata
     canvas.addEventListener('pointerup', (e)=>{
-      clearTimeout(pressTimer);
-      if(longPressFired) return;
-      const {nx,ny} = toNative(e);
-      const hit = hitTest(nx,ny);
-      if(!hit) return;
-      if(findAssignedRole(hit.rawValue)){ toast('Bu barkod zaten '+roleLabel(findAssignedRole(hit.rawValue))+' olarak seçili.'); return; }
-      tapCount++;
-      if(tapCount===1) assigned.ean = hit.rawValue;
-      else if(tapCount===2) assigned.imei1 = hit.rawValue;
-      else if(tapCount===3) assigned.imei2 = hit.rawValue;
-      else { toast('3 barkod seçildi. Seri no için basılı tutun ya da Bitti tuşuna basın.'); tapCount=3; return; }
-      renderChips(); draw();
+      if(!selectedSlot) return;
+      const rect = canvas.getBoundingClientRect();
+      const v = screenToVideo(e.clientX-rect.left, e.clientY-rect.top);
+      let hitVal = null;
+      tracked.forEach((t, rawValue)=>{
+        if(v.x>=t.box.x && v.x<=t.box.x+t.box.w && v.y>=t.box.y && v.y<=t.box.y+t.box.h) hitVal = rawValue;
+      });
+      if(hitVal){
+        // başka slottaysa oradan kaldır
+        const oldRole = findAssignedRole(hitVal);
+        if(oldRole) assigned[oldRole]=null;
+        assigned[selectedSlot]=hitVal; selectedSlot=null;
+        if(navigator.vibrate) navigator.vibrate(25);
+        renderSlots();
+      }
     });
-    canvas.addEventListener('pointercancel', ()=>clearTimeout(pressTimer));
 
-    function cleanup(){ stopped=true; stream.getTracks().forEach(t=>t.stop()); wrap.remove(); }
+    function cleanup(){ stopped=true; stream.getTracks().forEach(t=>t.stop()); window.removeEventListener('resize', resizeCanvas); wrap.remove(); }
     document.getElementById('msCancel').onclick = cleanup;
     document.getElementById('msDone').onclick = ()=>{
       const result = {...assigned};
       cleanup();
       finalizeMultiScan(result);
     };
-    renderChips();
+    renderSlots();
   }catch(e){ toast('Kameraya erişilemedi: '+e.message); }
 }
 
@@ -987,7 +1096,7 @@ function finalizeMultiScan(result){
     setUrunMode('ok', current.aktifUrun.ad+' eklendi ✓ (aktif ürün kullanıldı)');
     renderKoliUrunList();
   } else {
-    toast('EAN barkodu seçilmedi ve aktif ürün yok. Önce ürün barkodunu seçin.');
+    toast('EAN barkodu okunmadı ve aktif ürün yok. Önce ürün barkodunu okutun.');
   }
 }
 
