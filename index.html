@@ -30,6 +30,11 @@
   .appbar .back.hidden{visibility:hidden;}
   .appbar h1{font-size:16px; margin:0; font-weight:700; flex:1;}
   .appbar .sub{font-size:11px; color:var(--muted); font-family:var(--mono);}
+  .version-badge{
+    position:absolute; top:14px; right:14px; font-family:var(--mono); font-size:10.5px;
+    color:var(--muted); background:var(--panel-2); border:1px solid var(--line); border-radius:6px;
+    padding:3px 8px; z-index:21;
+  }
 
   .screen{display:none; flex-direction:column; flex:1; padding:18px 16px 32px;}
   .screen.active{display:flex;}
@@ -90,7 +95,11 @@
   .urun-item .name{font-size:13px; font-weight:600;}
   .urun-item .ids{font-family:var(--mono); font-size:10.5px; color:var(--muted); margin-top:4px;}
   .urun-item .id-chip{display:inline-block; background:var(--panel-2); border-radius:4px; padding:1px 6px; margin:2px 4px 0 0;}
-  .warn-badge{color:var(--warn); font-size:11px; font-weight:700;}
+  .urun-item .warn-badge{color:var(--warn); font-size:11px; font-weight:700;}
+  .koli-summary{background:var(--panel-2); border:1px solid var(--line); border-radius:10px; padding:10px 12px; margin-bottom:10px;}
+  .koli-summary-top{font-size:13px; font-weight:700; margin-bottom:6px;}
+  .koli-summary-line{font-size:12px; color:#cfd4da; display:flex; justify-content:space-between; padding:2px 0; font-family:var(--mono);}
+  .koli-summary-line b{color:var(--accent);}
 
   .koli-card{background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:13px 14px; margin-bottom:10px;}
   .koli-card .top{display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;}
@@ -155,6 +164,7 @@
 <div class="phone" id="phone">
 
   <div class="appbar">
+    <div class="version-badge" id="versionBadge">v1.4</div>
     <div class="back" id="backBtn" onclick="goBack()">←</div>
     <div style="flex:1">
       <h1 id="screenTitle">Mal Kabul</h1>
@@ -231,7 +241,7 @@
       <span class="dot-pulse"></span><span id="urunModeText">Ürün barkodu okutun</span>
     </div>
 
-    <button class="btn btn-secondary" onclick="openCamera('urun')">🏷️ Ürün Barkodu Okut</button>
+    <button class="btn btn-secondary" onclick="openCameraMultiScan()">🏷️ Ürün Barkodu Okut (Çoklu)</button>
     <div class="manual-input">
       <input id="manualUrunInput" placeholder="veya barkodu elle yazıp Enter" />
     </div>
@@ -513,26 +523,37 @@ function handleProductScan(raw){
   renderKoliUrunList();
 }
 
-function showUrunEslestirmeModal(raw, sip){
+function showUrunEslestirmeModal(raw, sip, identifiers){
+  identifiers = identifiers || {};
   const opts = sip.kalemler.map(k=>{
     const u = urunKatalog[k.gtin];
     const label = u ? u.ad : k.gtin;
-    return `<button class="btn btn-secondary" onclick="resolveBarcodeAs('${raw}','${k.gtin}')">${label}</button>`;
+    return `<button class="btn btn-secondary" onclick='resolveBarcodeAs(${JSON.stringify(raw)}, ${JSON.stringify(k.gtin)}, ${JSON.stringify(identifiers)})'>${label}</button>`;
   }).join('');
   showModal(`
     <h3>Bu barkod hangi ürüne ait?</h3>
     <p style="font-size:12.5px;color:#5c564b;">"${raw}" okutuldu ama daha önce görülmemiş. Bu siparişteki kalemlerden hangisiyle eşleşiyor? Seçtiğinizde sistem bu barkodu hatırlayacak.</p>
     <div style="display:flex; flex-direction:column; gap:8px; margin:12px 0;">${opts}</div>
-    <button class="btn btn-bad-outline" onclick="resolveBarcodeAs('${raw}', null)">Bunlardan biri değil (Beklenmeyen ürün)</button>
+    <button class="btn btn-bad-outline" onclick='resolveBarcodeAs(${JSON.stringify(raw)}, null, ${JSON.stringify(identifiers)})'>Bunlardan biri değil (Beklenmeyen ürün)</button>
   `);
 }
-function resolveBarcodeAs(raw, gtinMatch){
+function resolveBarcodeAs(raw, gtinMatch, identifiers){
+  identifiers = identifiers || {};
   closeModal();
   if(gtinMatch){
     if(!urunKatalog[raw]) urunKatalog[raw] = urunKatalog[gtinMatch];
-    handleProductScan(raw);
+    if(Object.keys(identifiers).length>0){
+      const urun = urunKatalog[raw];
+      current.aktifUrun = { gtin: raw, ad: urun.ad, requiredIds: urun.requiredIds };
+      current.koli.urunler.push({ gtin: raw, ad: urun.ad, identifiers, beklenmeyen:false });
+      current.pendingIdentifiers = null;
+      setUrunMode('ok', urun.ad+' eklendi ✓');
+      renderKoliUrunList();
+    } else {
+      handleProductScan(raw);
+    }
   } else {
-    current.koli.urunler.push({ gtin:'BEKLENMEYEN-'+raw, ad:'Beklenmeyen ürün ('+raw+')', identifiers:{}, beklenmeyen:true });
+    current.koli.urunler.push({ gtin:'BEKLENMEYEN-'+raw, ad:'Beklenmeyen ürün ('+raw+')', identifiers, beklenmeyen:true });
     setUrunMode('wait','Beklenmeyen ürün kaydedildi ⚠️');
     renderKoliUrunList();
   }
@@ -541,17 +562,41 @@ function resolveBarcodeAs(raw, gtinMatch){
 function renderKoliUrunList(){
   if(!current.koli) return;
   const list = document.getElementById('koliUrunList');
-  document.getElementById('koliUrunSayisi').textContent = current.koli.urunler.length;
-  if(current.koli.urunler.length===0){
-    list.innerHTML = `<div class="empty-note">Henüz ürün okutulmadı.</div>`;
+  const urunler = current.koli.urunler;
+  document.getElementById('koliUrunSayisi').textContent = urunler.length;
+
+  const ozet = {};
+  urunler.forEach(u=>{
+    if(!ozet[u.gtin]) ozet[u.gtin] = {ad:u.ad, count:0, beklenmeyen:u.beklenmeyen};
+    ozet[u.gtin].count++;
+  });
+  const distinctCount = Object.keys(ozet).length;
+  const summaryHtml = `<div class="koli-summary">
+    <div class="koli-summary-top">Toplam: ${urunler.length} adet — ${distinctCount} farklı ürün</div>
+    ${Object.values(ozet).map(o=>`<div class="koli-summary-line"><span>${o.beklenmeyen?'⚠️ ':''}${o.ad}</span><b>${o.count}</b></div>`).join('')}
+  </div>`;
+
+  if(urunler.length===0){
+    list.innerHTML = summaryHtml + `<div class="empty-note">Henüz ürün okutulmadı.</div>`;
     return;
   }
-  list.innerHTML = current.koli.urunler.map(u=>`
+
+  list.innerHTML = summaryHtml + urunler.map((u,i)=>`
     <div class="urun-item">
-      <div class="name">${u.ad} ${u.beklenmeyen?'<span class="warn-badge">⚠ Beklenmeyen</span>':''}</div>
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
+        <div class="name">${u.ad} ${u.beklenmeyen?'<span class="warn-badge">⚠ Beklenmeyen</span>':''}</div>
+        <span onclick="removeKoliUrun(${i})" style="color:var(--bad); font-size:19px; cursor:pointer; padding:0 4px; line-height:1;">✕</span>
+      </div>
       ${Object.keys(u.identifiers).length>0 ? `<div class="ids">${Object.entries(u.identifiers).map(([k,v])=>`<span class="id-chip">${idFieldLabel[k]||k}: ${v}</span>`).join('')}</div>` : ''}
     </div>
   `).join('');
+}
+
+function removeKoliUrun(index){
+  if(!current.koli) return;
+  if(!confirm('Bu ürünü kolideki listeden silmek istiyor musunuz?')) return;
+  current.koli.urunler.splice(index,1);
+  renderKoliUrunList();
 }
 
 function closeCurrentKoli(){
@@ -784,7 +829,169 @@ function toast(msg){
   setTimeout(()=>t.remove(), 2600);
 }
 
-/* ================= CAMERA ================= */
+/* ================= ÇOKLU BARKOD KAMERA (dokunarak seç) ================= */
+async function openCameraMultiScan(){
+  if(!('BarcodeDetector' in window)){
+    toast('Bu tarayıcı çoklu barkod taramayı desteklemiyor. Demo çipleri veya manuel giriş kullanın.');
+    return;
+  }
+  try{
+    const stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'position:fixed;inset:0;z-index:999;background:#000;';
+    const video = document.createElement('video');
+    video.style.cssText='position:absolute;inset:0;width:100%;height:100%;object-fit:contain;';
+    video.srcObject = stream; video.playsInline = true; video.muted = true;
+    const canvas = document.createElement('canvas');
+    canvas.style.cssText='position:absolute;inset:0;width:100%;height:100%;touch-action:none;';
+    const hint = document.createElement('div');
+    hint.style.cssText='position:absolute;top:16px;left:0;right:0;text-align:center;color:#fff;font-family:var(--mono);font-size:12.5px;text-shadow:0 1px 4px #000;padding:0 16px;';
+    hint.textContent = 'Sarı kutulara dokunun — 1: EAN, 2: IMEI1, 3: IMEI2 — Basılı tutun: Seri No';
+    const panel = document.createElement('div');
+    panel.style.cssText='position:absolute;left:0;right:0;bottom:0;background:#1a1e24ee;padding:12px 14px 16px;border-top:1px solid #2a3038;';
+    panel.innerHTML = `
+      <div id="msChips" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;min-height:26px;"></div>
+      <div style="display:flex;gap:8px;">
+        <button id="msCancel" style="flex:1;padding:13px;border-radius:10px;border:1px solid #2a3038;background:#222831;color:#e9ecef;font-weight:700;">İptal</button>
+        <button id="msDone" style="flex:2;padding:13px;border-radius:10px;border:none;background:#ff6a1a;color:#1a0d05;font-weight:800;">✔ Bitti — Kaydet</button>
+      </div>`;
+    wrap.appendChild(video); wrap.appendChild(canvas); wrap.appendChild(hint); wrap.appendChild(panel);
+    document.body.appendChild(wrap);
+    await video.play();
+
+    const detector = new BarcodeDetector();
+    let lastBoxes = [];
+    const assigned = { ean:null, imei1:null, imei2:null, serial:null };
+    let tapCount = 0;
+    let stopped = false;
+
+    function resizeCanvas(){ canvas.width = video.videoWidth || 1280; canvas.height = video.videoHeight || 720; }
+    video.addEventListener('loadedmetadata', resizeCanvas);
+    resizeCanvas();
+
+    const roleColor = r => ({ ean:'#2ea043', imei1:'#4c9be8', imei2:'#ff6a1a', serial:'#a855f7' }[r] || '#e6a417');
+    const roleLabel = r => ({ ean:'EAN', imei1:'IMEI 1', imei2:'IMEI 2', serial:'SERİ NO' }[r] || '');
+    function findAssignedRole(rawValue){
+      for(const r of ['ean','imei1','imei2','serial']) if(assigned[r]===rawValue) return r;
+      return null;
+    }
+    function renderChips(){
+      const chipsEl = document.getElementById('msChips');
+      if(!chipsEl) return;
+      const filled = ['ean','imei1','imei2','serial'].filter(r=>assigned[r]);
+      chipsEl.innerHTML = filled.length ? filled.map(r=>
+        `<span style="background:${roleColor(r)}22;border:1px solid ${roleColor(r)};color:${roleColor(r)};padding:5px 10px;border-radius:20px;font-size:11px;font-family:var(--mono);">${roleLabel(r)}: ${assigned[r]}</span>`
+      ).join('') : '<span style="color:#8a929c;font-size:11.5px;">Henüz barkod seçilmedi</span>';
+    }
+    function draw(){
+      const ctx = canvas.getContext('2d');
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+      lastBoxes.forEach(b=>{
+        const role = findAssignedRole(b.rawValue);
+        const color = role ? roleColor(role) : '#e6a417';
+        ctx.strokeStyle = color; ctx.lineWidth = Math.max(3, canvas.width*0.004);
+        ctx.strokeRect(b.boundingBox.x, b.boundingBox.y, b.boundingBox.width, b.boundingBox.height);
+        ctx.fillStyle = color;
+        ctx.font = Math.max(16, canvas.width*0.022)+'px monospace';
+        ctx.fillText(role ? roleLabel(role) : '?', b.boundingBox.x, Math.max(18, b.boundingBox.y-6));
+      });
+    }
+    async function loop(){
+      while(!stopped){
+        try{
+          const codes = await detector.detect(video);
+          lastBoxes = codes.map(c=>({rawValue:c.rawValue, boundingBox:c.boundingBox}));
+          draw();
+        }catch(e){}
+        await new Promise(r=>setTimeout(r,250));
+      }
+    }
+    loop();
+
+    function hitTest(nx, ny){
+      for(const b of lastBoxes){
+        const bb=b.boundingBox;
+        if(nx>=bb.x && nx<=bb.x+bb.width && ny>=bb.y && ny<=bb.y+bb.height) return b;
+      }
+      return null;
+    }
+    function toNative(e){
+      const rect = canvas.getBoundingClientRect();
+      return { nx:(e.clientX-rect.left)*(canvas.width/rect.width), ny:(e.clientY-rect.top)*(canvas.height/rect.height) };
+    }
+
+    let pressTimer=null, longPressFired=false;
+    canvas.addEventListener('pointerdown', (e)=>{
+      const {nx,ny} = toNative(e);
+      longPressFired = false;
+      pressTimer = setTimeout(()=>{
+        longPressFired = true;
+        const hit = hitTest(nx,ny);
+        if(hit){ assigned.serial = hit.rawValue; renderChips(); draw(); if(navigator.vibrate) navigator.vibrate(30); }
+      }, 550);
+    });
+    canvas.addEventListener('pointerup', (e)=>{
+      clearTimeout(pressTimer);
+      if(longPressFired) return;
+      const {nx,ny} = toNative(e);
+      const hit = hitTest(nx,ny);
+      if(!hit) return;
+      if(findAssignedRole(hit.rawValue)){ toast('Bu barkod zaten '+roleLabel(findAssignedRole(hit.rawValue))+' olarak seçili.'); return; }
+      tapCount++;
+      if(tapCount===1) assigned.ean = hit.rawValue;
+      else if(tapCount===2) assigned.imei1 = hit.rawValue;
+      else if(tapCount===3) assigned.imei2 = hit.rawValue;
+      else { toast('3 barkod seçildi. Seri no için basılı tutun ya da Bitti\\'ye basın.'); tapCount=3; return; }
+      renderChips(); draw();
+    });
+    canvas.addEventListener('pointercancel', ()=>clearTimeout(pressTimer));
+
+    function cleanup(){ stopped=true; stream.getTracks().forEach(t=>t.stop()); wrap.remove(); }
+    document.getElementById('msCancel').onclick = cleanup;
+    document.getElementById('msDone').onclick = ()=>{
+      const result = {...assigned};
+      cleanup();
+      finalizeMultiScan(result);
+    };
+    renderChips();
+  }catch(e){ toast('Kameraya erişilemedi: '+e.message); }
+}
+
+function finalizeMultiScan(result){
+  if(!current.koli) return;
+  const identifiers = {};
+  if(result.imei1) identifiers.IMEI1 = result.imei1;
+  if(result.imei2) identifiers.IMEI2 = result.imei2;
+  if(result.serial) identifiers.SERIAL = result.serial;
+
+  if(result.ean){
+    const urun = urunKatalog[result.ean];
+    if(urun){
+      current.aktifUrun = { gtin: result.ean, ad: urun.ad, requiredIds: urun.requiredIds };
+      current.koli.urunler.push({ gtin: result.ean, ad: urun.ad, identifiers, beklenmeyen:false });
+      current.pendingIdentifiers = null;
+      setUrunMode('ok', urun.ad+' eklendi ✓');
+      renderKoliUrunList();
+    } else {
+      const sipForKoli = current.koli.orderNo ? siparisler[current.koli.orderNo] : null;
+      if(sipForKoli && sipForKoli.kalemler && sipForKoli.kalemler.length>0){
+        showUrunEslestirmeModal(result.ean, sipForKoli, identifiers);
+      } else {
+        current.koli.urunler.push({ gtin:'BEKLENMEYEN-'+result.ean, ad:'Beklenmeyen ürün ('+result.ean+')', identifiers, beklenmeyen:true });
+        setUrunMode('wait', 'Beklenmeyen ürün kaydedildi ⚠️');
+        renderKoliUrunList();
+      }
+    }
+  } else if(current.aktifUrun){
+    current.koli.urunler.push({ gtin: current.aktifUrun.gtin, ad: current.aktifUrun.ad, identifiers, beklenmeyen:false });
+    setUrunMode('ok', current.aktifUrun.ad+' eklendi ✓ (aktif ürün kullanıldı)');
+    renderKoliUrunList();
+  } else {
+    toast('EAN barkodu seçilmedi ve aktif ürün yok. Önce ürün barkodunu seçin.');
+  }
+}
+
+/* ================= CAMERA (koli/basit tekli tarama) ================= */
 async function openCamera(mode){
   if(!('BarcodeDetector' in window)){
     toast('Bu tarayıcı kamera taramayı desteklemiyor. Demo çipleri veya manuel giriş kullanın.');
