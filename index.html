@@ -235,6 +235,9 @@
     <div class="manual-input">
       <input id="manualUrunInput" placeholder="veya barkodu elle yazıp Enter" />
     </div>
+    <div style="font-size:11px; color:var(--muted); margin:-4px 0 12px;">
+      💡 Ürün barkodunu sadece <b>ilk ünitede</b> okutun. Aynı ürünün sonraki ünitelerinde sadece IMEI/Seri okutmanız yeterli — sistem ürünü hatırlar. Farklı ürüne geçince o ürünün barkodunu okutun.
+    </div>
 
     <div class="demo-chips">
       <div class="chip-btn" onclick="handleProductScan('0195949643231')">MXEF3TU/A (seri yok)</div>
@@ -408,6 +411,7 @@ function handleKoliScan(raw){
       current.koli = { barkod: raw, tip:'eirsaliye', orderNo: current.orderNo, urunler:[] };
       current.koliUyari = null;
       current.pendingIdentifiers = null;
+      current.aktifUrun = null;
       document.getElementById('siparisInfoBar').innerHTML = infoBarHtml(current.orderNo, current.koli, null);
       setUrunMode('idle', 'Ürün barkodu okutun');
       showScreen('urun-girisi');
@@ -425,6 +429,7 @@ function handleKoliScan(raw){
   current.koli = { barkod: raw, tip: tanim.tip, orderNo: current.orderNo, urunler:[] };
   current.koliUyari = tanim.uyari || null;
   current.pendingIdentifiers = null;
+  current.aktifUrun = null;
 
   document.getElementById('siparisInfoBar').innerHTML = infoBarHtml(current.orderNo, current.koli, current.koliUyari);
   setUrunMode('idle', 'Ürün barkodu okutun');
@@ -461,35 +466,43 @@ function handleProductScan(raw){
   raw = raw.trim();
   if(!raw || !current.koli) return;
 
+  // 1) Taranan kod bilinen bir ÜRÜN barkoduysa -> aktif ürünü bu tipe ayarla/değiştir
+  const urun = urunKatalog[raw];
+  if(urun){
+    if(current.pendingIdentifiers && Object.keys(current.pendingIdentifiers.collected).length>0){
+      if(!confirm('Yarım kalan bir okutma var ('+current.aktifUrun.ad+'). Farklı ürüne geçilsin mi? (Yarım kayıt silinecek)')) return;
+    }
+    current.aktifUrun = { gtin: raw, ad: urun.ad, requiredIds: urun.requiredIds };
+    if(urun.requiredIds.length === 0){
+      current.koli.urunler.push({ gtin:raw, ad:urun.ad, identifiers:{}, beklenmeyen:false });
+      current.pendingIdentifiers = null;
+      setUrunMode('ok', urun.ad+' eklendi (seri gerekmiyor) — tekrar okutarak adet artırabilirsiniz');
+    } else {
+      current.pendingIdentifiers = { queue:[...urun.requiredIds], collected:{} };
+      setUrunMode('wait', 'Aktif ürün: '+urun.ad+' — şimdi '+idFieldLabel[urun.requiredIds[0]]+' okutun');
+    }
+    renderKoliUrunList();
+    return;
+  }
+
+  // 2) Bilinen ürün barkodu değil ama aktif bir seri gerektiren ürün varsa -> bu taramayı bir sonraki tanımlayıcı say
   if(current.pendingIdentifiers){
     const p = current.pendingIdentifiers;
     const field = p.queue.shift();
     p.collected[field] = raw;
-    if(p.queue.length===0){
-      current.koli.urunler.push({ gtin:p.gtin, ad:p.ad, identifiers:p.collected, beklenmeyen:!!p.beklenmeyen });
-      current.pendingIdentifiers = null;
-      setUrunMode('ok', 'Eklendi ✓ — sıradaki ürünü okutun');
+    if(p.queue.length === 0){
+      current.koli.urunler.push({ gtin:current.aktifUrun.gtin, ad:current.aktifUrun.ad, identifiers:p.collected, beklenmeyen:false });
+      // aynı ürün tipi için otomatik olarak bir sonraki üniteye hazırlan — ürün barkodunu tekrar okutmaya gerek yok
+      current.pendingIdentifiers = { queue:[...current.aktifUrun.requiredIds], collected:{} };
+      setUrunMode('ok', '1 adet eklendi ✓ — sıradaki ünite için '+idFieldLabel[current.aktifUrun.requiredIds[0]]+' okutun');
     } else {
-      setUrunMode('wait', p.ad+' — şimdi '+idFieldLabel[p.queue[0]]+' okutun');
+      setUrunMode('wait', current.aktifUrun.ad+' — şimdi '+idFieldLabel[p.queue[0]]+' okutun');
     }
     renderKoliUrunList();
     return;
   }
 
-  const urun = urunKatalog[raw];
-  if(urun){
-    if(urun.requiredIds.length===0){
-      current.koli.urunler.push({ gtin:raw, ad:urun.ad, identifiers:{}, beklenmeyen:false });
-      setUrunMode('ok', urun.ad+' eklendi (seri gerekmiyor)');
-    } else {
-      current.pendingIdentifiers = { gtin:raw, ad:urun.ad, queue:[...urun.requiredIds], collected:{} };
-      setUrunMode('wait', urun.ad+' — şimdi '+idFieldLabel[urun.requiredIds[0]]+' okutun');
-    }
-    renderKoliUrunList();
-    return;
-  }
-
-  // tanınmayan barkod — bu siparişin kalem listesi varsa eşleştirme asistanı göster
+  // 3) Ne bilinen ürün ne aktif bekleme var — tanınmayan barkod
   const sipForKoli = current.koli.orderNo ? siparisler[current.koli.orderNo] : null;
   if(sipForKoli && sipForKoli.kalemler && sipForKoli.kalemler.length>0){
     showUrunEslestirmeModal(raw, sipForKoli);
