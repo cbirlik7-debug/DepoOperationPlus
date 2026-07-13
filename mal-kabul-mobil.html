@@ -164,7 +164,7 @@
 <div class="phone" id="phone">
 
   <div class="appbar">
-    <div class="version-badge" id="versionBadge">v1.4</div>
+    <div class="version-badge" id="versionBadge">v1.5</div>
     <div class="back" id="backBtn" onclick="goBack()">←</div>
     <div style="flex:1">
       <h1 id="screenTitle">Mal Kabul</h1>
@@ -941,7 +941,7 @@ async function openCameraMultiScan(){
       if(tapCount===1) assigned.ean = hit.rawValue;
       else if(tapCount===2) assigned.imei1 = hit.rawValue;
       else if(tapCount===3) assigned.imei2 = hit.rawValue;
-      else { toast('3 barkod seçildi. Seri no için basılı tutun ya da Bitti\\'ye basın.'); tapCount=3; return; }
+      else { toast('3 barkod seçildi. Seri no için basılı tutun ya da Bitti tuşuna basın.'); tapCount=3; return; }
       renderChips(); draw();
     });
     canvas.addEventListener('pointercancel', ()=>clearTimeout(pressTimer));
