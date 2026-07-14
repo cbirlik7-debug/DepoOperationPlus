@@ -4,6 +4,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
 <title>Mal Kabul</title>
+<link rel="manifest" href="./manifest.json">
+<meta name="theme-color" content="#0f1216">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Mal Kabul">
+<link rel="apple-touch-icon" href="./apple-touch-icon.png">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap');
   :root{
@@ -164,7 +172,7 @@
 <div class="phone" id="phone">
 
   <div class="appbar">
-    <div class="version-badge" id="versionBadge">v1.6</div>
+    <div class="version-badge" id="versionBadge">v2.0</div>
     <div class="back" id="backBtn" onclick="goBack()">←</div>
     <div style="flex:1">
       <h1 id="screenTitle">Mal Kabul</h1>
@@ -181,7 +189,8 @@
     <div style="text-align:center; color:var(--muted); font-size:11.5px; margin:-6px 0 16px;">Koli barkodunu okutun — sipariş otomatik bulunur</div>
 
     <button class="btn btn-secondary" onclick="showScreen('siparis-no-giris')">📋 Sipariş No ile Giriş Yap</button>
-    <button class="btn btn-secondary" onclick="startIrsaliyeOku()">📄 İrsaliye Fotoğrafını Oku</button>
+    <button class="btn btn-secondary" onclick="showScreen('sorgula')">🔍 Ürün Sorgula (IMEI/Seri)</button>
+    <button class="btn btn-secondary" style="opacity:.45;" onclick="toast('İrsaliye Oku özelliği şimdilik devre dışı — yakında eklenecek.')">📄 İrsaliye Fotoğrafını Oku (yakında)</button>
 
     <div class="section-label" style="margin-top:18px;">Demo (gerçek okuyucunuz yoksa)</div>
     <div class="demo-chips">
@@ -206,6 +215,17 @@
       <div class="chip-btn" onclick="quickManualSiparis('190672525_4')">190672525_4 (Media Markt)</div>
       <div class="chip-btn" onclick="quickManualSiparis('SP-X1-778')">SP-X1-778 (X1 Elektronik)</div>
     </div>
+  </div>
+
+  <!-- SCREEN: ÜRÜN SORGULA -->
+  <div class="screen" id="screen-sorgula">
+    <div class="section-label">IMEI / Seri No / EAN Sorgula</div>
+    <div class="manual-input">
+      <input id="sorguInput" placeholder="IMEI, seri no veya EAN girin" />
+    </div>
+    <button class="btn btn-secondary" onclick="sorgulaUrun()">🔍 Sorgula</button>
+    <button class="btn btn-secondary" onclick="openCamera('sorgu')">📷 Barkod Okutarak Sorgula</button>
+    <div id="sorguSonuc" style="margin-top:14px;"></div>
   </div>
 
   <!-- SCREEN: İRSALİYE OKU (fotoğraf ile) -->
@@ -318,6 +338,12 @@
         <label>Açıklama (opsiyonel)</label>
         <input type="text" id="tutanakAciklama" placeholder="Örn: koli hasarlı geldi">
       </div>
+      <div class="form-row">
+        <label>Fotoğraf (opsiyonel — hasar/eksik kanıtı)</label>
+        <input type="file" accept="image/*" capture="environment" id="tutanakFotoInput" style="display:none" onchange="handleTutanakFotoSelect(event)">
+        <button class="btn btn-secondary" style="padding:9px;" onclick="document.getElementById('tutanakFotoInput').click()">📷 Fotoğraf Çek/Seç</button>
+        <div id="tutanakFotoPreview" style="margin-top:8px;"></div>
+      </div>
       <button class="btn btn-secondary" onclick="addTutanakSatir()">+ Satır Ekle</button>
     </div>
 
@@ -333,8 +359,22 @@
 <div id="modalRoot"></div>
 
 <script>
-/* ================= MOCK VERİ ================= */
-const urunKatalog = {
+/* ================= SUPABASE BAĞLANTISI =================
+   Supabase projenizi kurduktan sonra bu 2 satırı kendi bilgilerinizle değiştirin.
+   Project URL ve anon public key -> Supabase Dashboard > Settings > API
+   Bu ikisi GİZLİ DEĞİLDİR, herkese açık frontend kodunda durabilir (güvenlik RLS ile sağlanır). */
+const SUPABASE_URL = "https://adjlnxvilzbrezupwbjn.supabase.co";       // örn: https://xxxxxxxx.supabase.co
+const SUPABASE_ANON_KEY = "sb_publishable_Ni0EL9_-bYGLARZVeYq6eg_6fLo-bhK ";   // örn: eyJhbGciOi...
+
+const db = (SUPABASE_URL.startsWith('http') && window.supabase)
+  ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+  : null;
+if(!db) console.warn('Supabase bağlı değil — uygulama yalnızca bu cihazda, kalıcı olmayan modda çalışıyor.');
+
+/* ================= VARSAYILAN/YEDEK VERİ =================
+   Supabase bağlıysa açılışta buradaki veri DB'den gelenle değiştirilir.
+   Supabase bağlı değilse (kurulum yapılmadıysa) uygulama bu demo verisiyle çalışmaya devam eder. */
+let urunKatalog = {
   "0195949643231": { artikel:"1239968", ad:"MXEF3TU/A SE40 2024 (Watch Kordonu)", requiredIds:[] },
   "8806097660866": { artikel:"SM-A176B/DS", ad:"Samsung Galaxy A17 8/256GB Mavi", requiredIds:["IMEI1","IMEI2"] },
   "195950051148":  { artikel:"MD1Q4TU/A", ad:"iPhone 16e 128GB Black", requiredIds:["SERIAL","IMEI1","IMEI2"] },
@@ -342,14 +382,14 @@ const urunKatalog = {
 };
 const idFieldLabel = { IMEI1:"IMEI 1", IMEI2:"IMEI 2", SERIAL:"Seri No" };
 
-const siparisler = {
+let siparisler = {
   "190672525_4": { tedarikci:"Media Markt Turkey Tic.", irsaliyeNo:"LY12024006256262",
     kalemler:[ {gtin:"0195949643231", beklenen:8}, {gtin:"8806097660866", beklenen:5} ] },
   "SP-X1-778": { tedarikci:"X1 Elektronik Ltd.", irsaliyeNo:"IRS-X1-0099",
     kalemler:[ {gtin:"8690001555001", beklenen:15} ] },
 };
 
-const koliTanimlari = {
+let koliTanimlari = {
   "7071616921": { tip:"eirsaliye", orderNo:"190672525_4" },
   "7071616922": { tip:"eirsaliye", orderNo:"190672525_4" },
   "0100604934150000": { tip:"kurye", orderNo:null, uyari:"Bu kutu üzerinde 2 farklı sevkiyat etiketi tespit edildi. Doğru etiketi teyit edin." },
@@ -357,6 +397,213 @@ const koliTanimlari = {
   "X1-KOLI-02": { tip:"eirsaliye", orderNo:"SP-X1-778" },
   "X1-KOLI-03": { tip:"eirsaliye", orderNo:"SP-X1-778" },
 };
+
+/* ================= DB YÜKLEME (açılışta) ================= */
+async function loadFromDB(){
+  if(!db) return;
+  try{
+    const [{data:sipData}, {data:katalogData}, {data:koliTanimData}] = await Promise.all([
+      db.from('siparisler').select('*'),
+      db.from('urun_katalog').select('*'),
+      db.from('koli_tanimlari').select('*'),
+    ]);
+    if(sipData && sipData.length){
+      siparisler = {};
+      sipData.forEach(r=>{ siparisler[r.siparis_no] = { tedarikci:r.tedarikci, irsaliyeNo:r.irsaliye_no, kalemler:r.kalemler||[], dinamik:r.dinamik }; });
+    }
+    if(katalogData && katalogData.length){
+      urunKatalog = {};
+      katalogData.forEach(r=>{ urunKatalog[r.gtin] = { artikel:r.artikel, ad:r.ad, requiredIds:r.required_ids||[] }; });
+    }
+    if(koliTanimData && koliTanimData.length){
+      koliTanimlari = {};
+      koliTanimData.forEach(r=>{ koliTanimlari[r.barkod] = { tip:r.tip, orderNo:r.siparis_no, uyari:r.uyari }; });
+    }
+    console.log('Supabase: başlangıç verisi yüklendi.');
+  }catch(e){ console.warn('Supabase veri yükleme hatası, yerel demo veriyle devam ediliyor:', e); }
+}
+
+/* ================= DB YAZMA YARDIMCILARI ================= */
+async function dbUpsertKoli(koli){
+  if(!db) return null;
+  const { data, error } = await db.from('koliler')
+    .upsert({ barkod:koli.barkod, tip:koli.tip, siparis_no:koli.orderNo, durum:'acik', uyari:koli.uyari||null }, { onConflict:'barkod', ignoreDuplicates:false })
+    .select().single();
+  if(error){ console.warn('dbUpsertKoli hata:', error); return null; }
+  return data;
+}
+async function dbFetchKoliByBarkod(barkod){
+  if(!db) return null;
+  const { data, error } = await db.from('koliler').select('*, koli_urunler(*)').eq('barkod', barkod).maybeSingle();
+  if(error){ console.warn('dbFetchKoliByBarkod hata:', error); return null; }
+  return data;
+}
+async function dbUpdateKoliDurum(koliId, durum){
+  if(!db || !koliId) return false;
+  const { error } = await db.from('koliler').update({ durum, updated_at: new Date().toISOString() }).eq('id', koliId);
+  if(error){ console.warn('dbUpdateKoliDurum hata:', error); return false; }
+  return true;
+}
+async function dbInsertKoliUrun(koliId, urun){
+  if(!db || !koliId) return null;
+  const { data, error } = await db.from('koli_urunler')
+    .insert({ koli_id:koliId, gtin:urun.gtin, ad:urun.ad, identifiers:urun.identifiers||{}, beklenmeyen:!!urun.beklenmeyen })
+    .select().single();
+  if(error){ console.warn('dbInsertKoliUrun hata:', error); return null; }
+  return data;
+}
+async function dbDeleteKoliUrun(id){
+  if(!db || !id) return;
+  const { error } = await db.from('koli_urunler').delete().eq('id', id);
+  if(error) console.warn('dbDeleteKoliUrun hata:', error);
+}
+async function dbFetchKolilerForOrder(orderNo){
+  if(!db) return [];
+  const q = orderNo===null ? db.from('koliler').select('*, koli_urunler(*)').is('siparis_no', null)
+                            : db.from('koliler').select('*, koli_urunler(*)').eq('siparis_no', orderNo);
+  const { data, error } = await q;
+  if(error){ console.warn('dbFetchKolilerForOrder hata:', error); return []; }
+  return data || [];
+}
+async function dbFetchAllKoliGroups(){
+  if(!db) return [];
+  const { data, error } = await db.from('koliler').select('*, koli_urunler(*)');
+  if(error){ console.warn('dbFetchAllKoliGroups hata:', error); return []; }
+  return data || [];
+}
+async function dbUpsertTamamlandi(orderNo, kayitNo){
+  if(!db) return false;
+  const { error } = await db.from('tamamlanan_siparisler').upsert({ siparis_no:orderNo, kayit_no:kayitNo });
+  if(error){ console.warn('dbUpsertTamamlandi hata:', error); return false; }
+  return true;
+}
+async function dbFetchTamamlanan(){
+  if(!db) return {};
+  const { data, error } = await db.from('tamamlanan_siparisler').select('*');
+  if(error){ console.warn('dbFetchTamamlanan hata:', error); return {}; }
+  const out = {};
+  (data||[]).forEach(r=> out[r.siparis_no] = { kayitNo:r.kayit_no, zaman:r.created_at });
+  return out;
+}
+async function dbInsertTutanak(orderNo, tutanakNo, satirlar){
+  if(!db) return;
+  const { error } = await db.from('tutanaklar').insert({ siparis_no:orderNo, tutanak_no:tutanakNo, satirlar });
+  if(error){
+    if(isNetworkError(error)) enqueueOp({ t:'tutanak', orderNo, tutanakNo, satirlar });
+    else console.warn('dbInsertTutanak hata:', error);
+  }
+}
+
+/* ================= SESLİ/TİTREŞİMLİ GERİ BİLDİRİM ================= */
+let _audioCtx = null;
+function beep(freq, dur, vol){
+  try{
+    _audioCtx = _audioCtx || new (window.AudioContext||window.webkitAudioContext)();
+    const o = _audioCtx.createOscillator(), g = _audioCtx.createGain();
+    o.frequency.value = freq; o.type='square';
+    g.gain.value = vol||0.12;
+    o.connect(g); g.connect(_audioCtx.destination);
+    o.start(); o.stop(_audioCtx.currentTime + dur);
+  }catch(e){}
+}
+function feedbackOk(){ beep(1250, 0.08); if(navigator.vibrate) navigator.vibrate(30); }
+function feedbackStep(){ beep(950, 0.05, 0.08); if(navigator.vibrate) navigator.vibrate(15); }
+function feedbackErr(){ beep(260, 0.22); setTimeout(()=>beep(260,0.18),260); if(navigator.vibrate) navigator.vibrate([110,60,110]); }
+
+/* ================= ÇEVRİMDIŞI KUYRUK (PWA offline) =================
+   İnternet yokken yapılan kayıtlar telefonda saklanır, bağlantı gelince otomatik gönderilir. */
+const PENDING_KEY = 'depoPendingOps';
+function getPending(){ try{ return JSON.parse(localStorage.getItem(PENDING_KEY))||[]; }catch(e){ return []; } }
+function setPending(a){ localStorage.setItem(PENDING_KEY, JSON.stringify(a)); updatePendingBadge(); }
+function enqueueOp(op){ const a=getPending(); a.push(op); setPending(a); }
+function updatePendingBadge(){
+  const n = getPending().length;
+  const el = document.getElementById('versionBadge');
+  if(!el) return;
+  if(!el.dataset.base) el.dataset.base = el.textContent;
+  el.textContent = el.dataset.base + (n>0 ? ' • '+n+' bekliyor' : '');
+}
+function isNetworkError(error){
+  return error && /fetch|network|failed|timeout/i.test(error.message||'');
+}
+async function execOp(op){
+  try{
+    if(op.t==='koli'){
+      const {error} = await db.from('koliler').upsert(
+        { barkod:op.barkod, tip:op.tip, siparis_no:op.orderNo, durum:op.durum||'acik', uyari:op.uyari||null },
+        { onConflict:'barkod' });
+      return !error;
+    }
+    if(op.t==='urun'){
+      let k = await db.from('koliler').select('id').eq('barkod', op.koliBarkod).maybeSingle();
+      if(!k.data){
+        await db.from('koliler').upsert({ barkod:op.koliBarkod, tip:op.tip||'eirsaliye', siparis_no:op.orderNo||null, durum:'acik' }, { onConflict:'barkod' });
+        k = await db.from('koliler').select('id').eq('barkod', op.koliBarkod).maybeSingle();
+      }
+      if(!k.data) return false;
+      const {error} = await db.from('koli_urunler').insert({ koli_id:k.data.id, gtin:op.urun.gtin, ad:op.urun.ad, identifiers:op.urun.identifiers||{}, beklenmeyen:!!op.urun.beklenmeyen });
+      return !error;
+    }
+    if(op.t==='durum'){
+      const {error} = await db.from('koliler').update({ durum:op.durum, updated_at:new Date().toISOString() }).eq('barkod', op.koliBarkod);
+      return !error;
+    }
+    if(op.t==='tamam'){
+      const {error} = await db.from('tamamlanan_siparisler').upsert({ siparis_no:op.orderNo, kayit_no:op.kayitNo });
+      return !error;
+    }
+    if(op.t==='tutanak'){
+      const {error} = await db.from('tutanaklar').insert({ siparis_no:op.orderNo, tutanak_no:op.tutanakNo, satirlar:op.satirlar });
+      return !error;
+    }
+    return true;
+  }catch(e){ return false; }
+}
+let _flushing = false;
+async function flushPending(){
+  if(!db || _flushing || !navigator.onLine) return;
+  const ops = getPending();
+  if(!ops.length) return;
+  _flushing = true;
+  const kalan = [];
+  for(const op of ops){
+    const ok = await execOp(op);
+    if(!ok) kalan.push(op);
+  }
+  setPending(kalan);
+  _flushing = false;
+  if(kalan.length===0) toast('Çevrimdışı kayıtlar senkronlandı ✓');
+}
+window.addEventListener('online', ()=>{ toast('Bağlantı geldi — senkronlanıyor...'); flushPending(); });
+
+/* ================= ÜRÜN SORGULAMA ================= */
+async function sorgulaUrun(rawFromCamera){
+  const v = (rawFromCamera || document.getElementById('sorguInput').value).trim();
+  if(rawFromCamera) document.getElementById('sorguInput').value = rawFromCamera;
+  const out = document.getElementById('sorguSonuc');
+  if(!v){ out.innerHTML = '<div class="empty-note">Sorgulanacak bir değer girin.</div>'; return; }
+  if(!db){ out.innerHTML = '<div class="empty-note">Bu özellik veritabanı bağlantısı gerektirir.</div>'; return; }
+  out.innerHTML = '<div class="empty-note">Aranıyor...</div>';
+  const { data, error } = await db.from('koli_urunler')
+    .select('*, koliler(barkod, siparis_no, durum, magaza_kodu, created_at)')
+    .or(`identifiers->>IMEI1.eq.${v},identifiers->>IMEI2.eq.${v},identifiers->>SERIAL.eq.${v},gtin.eq.${v}`)
+    .order('created_at', {ascending:false})
+    .limit(20);
+  if(error){ out.innerHTML = '<div class="empty-note">Sorgu hatası: '+error.message+'</div>'; return; }
+  if(!data || !data.length){ out.innerHTML = '<div class="empty-note">"'+v+'" için kayıt bulunamadı.</div>'; feedbackErr(); return; }
+  feedbackOk();
+  out.innerHTML = data.map(u=>{
+    const k = u.koliler || {};
+    const sip = k.siparis_no ? siparisler[k.siparis_no] : null;
+    return `<div class="koli-card">
+      <div class="top"><b>${u.ad}</b></div>
+      ${Object.entries(u.identifiers||{}).map(([kk,vv])=>`<div class="meta" style="font-family:var(--mono);">${idFieldLabel[kk]||kk}: <b>${vv}</b></div>`).join('')}
+      <div class="meta" style="margin-top:6px;">Koli: <b>${k.barkod||'—'}</b> ${k.durum? '('+k.durum+')':''}</div>
+      <div class="meta">Sipariş: ${k.siparis_no||'—'} ${sip? '— '+sip.tedarikci : ''}</div>
+      <div class="meta">Giriş zamanı: ${u.created_at ? new Date(u.created_at).toLocaleString('tr-TR') : '—'}</div>
+    </div>`;
+  }).join('');
+}
 
 /* ================= STATE ================= */
 let screenStack = ['home'];
@@ -371,6 +618,7 @@ let detayView = 'artikel';
 const screenTitles = {
   'home': ['Mal Kabul',''],
   'siparis-no-giris': ['Sipariş No ile Giriş',''],
+  'sorgula': ['Ürün Sorgula',''],
   'irsaliye-oku': ['İrsaliye Oku',''],
   'koli-bekleniyor': ['Koli Bekleniyor',''],
   'urun-girisi': ['Ürün Girişi',''],
@@ -411,22 +659,17 @@ function quickManualSiparis(orderNo){
 }
 
 /* ================= KOLİ SCAN ================= */
-function handleKoliScan(raw){
+async function handleKoliScan(raw){
   raw = raw.trim();
   const tanim = koliTanimlari[raw];
   if(!tanim){
     if(current.orderNo){
       const onay = confirm('"'+raw+'" bilinen bir koli barkodu değil. Bu siparişe ait yeni bir koli olarak eklensin mi?');
       if(!onay) return;
-      current.koli = { barkod: raw, tip:'eirsaliye', orderNo: current.orderNo, urunler:[] };
-      current.koliUyari = null;
-      current.pendingIdentifiers = null;
-      current.aktifUrun = null;
-      document.getElementById('siparisInfoBar').innerHTML = infoBarHtml(current.orderNo, current.koli, null);
-      setUrunMode('idle', 'Ürün barkodu okutun');
-      showScreen('urun-girisi');
+      await openKoliWithBarkod(raw, 'eirsaliye', current.orderNo, null);
       return;
     }
+    feedbackErr();
     toast('"'+raw+'" tanınan bir koli barkodu değil.');
     return;
   }
@@ -436,13 +679,36 @@ function handleKoliScan(raw){
   }
   if(!current.orderNo) current.orderNo = tanim.orderNo; // koli üzerinden sipariş otomatik geliyor
 
-  current.koli = { barkod: raw, tip: tanim.tip, orderNo: current.orderNo, urunler:[] };
-  current.koliUyari = tanim.uyari || null;
+  await openKoliWithBarkod(raw, tanim.tip, current.orderNo, tanim.uyari || null);
+}
+
+async function openKoliWithBarkod(barkod, tip, orderNo, uyari){
+  toast('Koli kontrol ediliyor...');
+  // Başka bir cihaz bu koliyi zaten açmış/kapatmış olabilir — önce DB'den bak
+  const existing = await dbFetchKoliByBarkod(barkod);
+  if(existing){
+    current.koli = {
+      id: existing.id, barkod, tip: existing.tip, orderNo: existing.siparis_no,
+      urunler: (existing.koli_urunler||[]).map(u=>({ id:u.id, gtin:u.gtin, ad:u.ad, identifiers:u.identifiers||{}, beklenmeyen:u.beklenmeyen }))
+    };
+    if(existing.durum==='kapali'){
+      if(!confirm('Bu koli başka bir cihazda/oturumda zaten kapatılmış ('+existing.koli_urunler.length+' ürün). Yeniden açılsın mı?')) { current.koli=null; return; }
+      await dbUpdateKoliDurum(existing.id, 'acik');
+    }
+    toast('Koli bulundu — '+current.koli.urunler.length+' ürün zaten kayıtlı.');
+  } else {
+    const inserted = await dbUpsertKoli({ barkod, tip, orderNo, uyari });
+    current.koli = { id: inserted ? inserted.id : null, barkod, tip, orderNo, urunler:[] };
+    if(!inserted && db) enqueueOp({ t:'koli', barkod, tip, orderNo, uyari });
+  }
+  feedbackOk();
+  current.koliUyari = uyari;
   current.pendingIdentifiers = null;
   current.aktifUrun = null;
 
   document.getElementById('siparisInfoBar').innerHTML = infoBarHtml(current.orderNo, current.koli, current.koliUyari);
   setUrunMode('idle', 'Ürün barkodu okutun');
+  renderKoliUrunList();
   showScreen('urun-girisi');
 }
 
@@ -472,7 +738,7 @@ function setUrunMode(kind, text){
   document.getElementById('urunModeText').textContent = text;
 }
 
-function handleProductScan(raw){
+async function handleProductScan(raw){
   raw = raw.trim();
   if(!raw || !current.koli) return;
 
@@ -484,11 +750,18 @@ function handleProductScan(raw){
     }
     current.aktifUrun = { gtin: raw, ad: urun.ad, requiredIds: urun.requiredIds };
     if(urun.requiredIds.length === 0){
-      current.koli.urunler.push({ gtin:raw, ad:urun.ad, identifiers:{}, beklenmeyen:false });
+      const kayit = { gtin:raw, ad:urun.ad, identifiers:{}, beklenmeyen:false };
+      current.koli.urunler.push(kayit);
+      renderKoliUrunList();
+      feedbackOk();
+      const saved = await dbInsertKoliUrun(current.koli.id, kayit);
+      if(saved) kayit.id = saved.id;
+      else if(db) enqueueOp({ t:'urun', koliBarkod:current.koli.barkod, tip:current.koli.tip, orderNo:current.koli.orderNo, urun:kayit });
       current.pendingIdentifiers = null;
       setUrunMode('ok', urun.ad+' eklendi (seri gerekmiyor) — tekrar okutarak adet artırabilirsiniz');
     } else {
       current.pendingIdentifiers = { queue:[...urun.requiredIds], collected:{} };
+      feedbackStep();
       setUrunMode('wait', 'Aktif ürün: '+urun.ad+' — şimdi '+idFieldLabel[urun.requiredIds[0]]+' okutun');
     }
     renderKoliUrunList();
@@ -501,11 +774,18 @@ function handleProductScan(raw){
     const field = p.queue.shift();
     p.collected[field] = raw;
     if(p.queue.length === 0){
-      current.koli.urunler.push({ gtin:current.aktifUrun.gtin, ad:current.aktifUrun.ad, identifiers:p.collected, beklenmeyen:false });
+      const kayit = { gtin:current.aktifUrun.gtin, ad:current.aktifUrun.ad, identifiers:p.collected, beklenmeyen:false };
+      current.koli.urunler.push(kayit);
+      renderKoliUrunList();
+      feedbackOk();
+      const saved = await dbInsertKoliUrun(current.koli.id, kayit);
+      if(saved) kayit.id = saved.id;
+      else if(db) enqueueOp({ t:'urun', koliBarkod:current.koli.barkod, tip:current.koli.tip, orderNo:current.koli.orderNo, urun:kayit });
       // aynı ürün tipi için otomatik olarak bir sonraki üniteye hazırlan — ürün barkodunu tekrar okutmaya gerek yok
       current.pendingIdentifiers = { queue:[...current.aktifUrun.requiredIds], collected:{} };
       setUrunMode('ok', '1 adet eklendi ✓ — sıradaki ünite için '+idFieldLabel[current.aktifUrun.requiredIds[0]]+' okutun');
     } else {
+      feedbackStep();
       setUrunMode('wait', current.aktifUrun.ad+' — şimdi '+idFieldLabel[p.queue[0]]+' okutun');
     }
     renderKoliUrunList();
@@ -515,10 +795,17 @@ function handleProductScan(raw){
   // 3) Ne bilinen ürün ne aktif bekleme var — tanınmayan barkod
   const sipForKoli = current.koli.orderNo ? siparisler[current.koli.orderNo] : null;
   if(sipForKoli && sipForKoli.kalemler && sipForKoli.kalemler.length>0){
+    feedbackStep();
     showUrunEslestirmeModal(raw, sipForKoli);
     return;
   }
-  current.koli.urunler.push({ gtin:'BEKLENMEYEN-'+raw, ad:'Beklenmeyen ürün ('+raw+')', identifiers:{}, beklenmeyen:true });
+  const kayit = { gtin:'BEKLENMEYEN-'+raw, ad:'Beklenmeyen ürün ('+raw+')', identifiers:{}, beklenmeyen:true };
+  current.koli.urunler.push(kayit);
+  renderKoliUrunList();
+  feedbackErr();
+  const saved = await dbInsertKoliUrun(current.koli.id, kayit);
+  if(saved) kayit.id = saved.id;
+  else if(db) enqueueOp({ t:'urun', koliBarkod:current.koli.barkod, tip:current.koli.tip, orderNo:current.koli.orderNo, urun:kayit });
   setUrunMode('wait', 'Beklenmeyen ürün kaydedildi ⚠️');
   renderKoliUrunList();
 }
@@ -537,7 +824,7 @@ function showUrunEslestirmeModal(raw, sip, identifiers){
     <button class="btn btn-bad-outline" onclick='resolveBarcodeAs(${JSON.stringify(raw)}, null, ${JSON.stringify(identifiers)})'>Bunlardan biri değil (Beklenmeyen ürün)</button>
   `);
 }
-function resolveBarcodeAs(raw, gtinMatch, identifiers){
+async function resolveBarcodeAs(raw, gtinMatch, identifiers){
   identifiers = identifiers || {};
   closeModal();
   if(gtinMatch){
@@ -545,7 +832,11 @@ function resolveBarcodeAs(raw, gtinMatch, identifiers){
     if(Object.keys(identifiers).length>0){
       const urun = urunKatalog[raw];
       current.aktifUrun = { gtin: raw, ad: urun.ad, requiredIds: urun.requiredIds };
-      current.koli.urunler.push({ gtin: raw, ad: urun.ad, identifiers, beklenmeyen:false });
+      const kayit = { gtin: raw, ad: urun.ad, identifiers, beklenmeyen:false };
+      current.koli.urunler.push(kayit);
+      renderKoliUrunList();
+      const saved = await dbInsertKoliUrun(current.koli.id, kayit);
+      if(saved) kayit.id = saved.id;
       current.pendingIdentifiers = null;
       setUrunMode('ok', urun.ad+' eklendi ✓');
       renderKoliUrunList();
@@ -553,7 +844,11 @@ function resolveBarcodeAs(raw, gtinMatch, identifiers){
       handleProductScan(raw);
     }
   } else {
-    current.koli.urunler.push({ gtin:'BEKLENMEYEN-'+raw, ad:'Beklenmeyen ürün ('+raw+')', identifiers, beklenmeyen:true });
+    const kayit = { gtin:'BEKLENMEYEN-'+raw, ad:'Beklenmeyen ürün ('+raw+')', identifiers, beklenmeyen:true };
+    current.koli.urunler.push(kayit);
+    renderKoliUrunList();
+    const saved = await dbInsertKoliUrun(current.koli.id, kayit);
+    if(saved) kayit.id = saved.id;
     setUrunMode('wait','Beklenmeyen ürün kaydedildi ⚠️');
     renderKoliUrunList();
   }
@@ -592,17 +887,22 @@ function renderKoliUrunList(){
   `).join('');
 }
 
-function removeKoliUrun(index){
+async function removeKoliUrun(index){
   if(!current.koli) return;
   if(!confirm('Bu ürünü kolideki listeden silmek istiyor musunuz?')) return;
-  current.koli.urunler.splice(index,1);
+  const [removed] = current.koli.urunler.splice(index,1);
   renderKoliUrunList();
+  if(removed && removed.id) await dbDeleteKoliUrun(removed.id);
 }
 
-function closeCurrentKoli(){
+async function closeCurrentKoli(){
   if(!current.koli) return;
-  if(current.pendingIdentifiers){ toast('Bekleyen bir IMEI/Seri okutması var, önce tamamlayın.'); return; }
-  session.koliler.push(current.koli);
+  if(current.pendingIdentifiers){ feedbackErr(); toast('Bekleyen bir IMEI/Seri okutması var, önce tamamlayın.'); return; }
+  const koliRef = current.koli;
+  const ok = await dbUpdateKoliDurum(koliRef.id, 'kapali');
+  if(!ok && db) enqueueOp({ t:'durum', koliBarkod:koliRef.barkod, durum:'kapali' });
+  feedbackOk();
+  session.koliler.push(koliRef);
   current.koli = null;
   current.pendingIdentifiers = null;
   toast('Koli kapatıldı ve listeye eklendi.');
@@ -622,25 +922,51 @@ function renderHomeSummary(){
 function renderSessionKoliList(){
   const el = document.getElementById('sessionKoliList');
   if(session.koliler.length===0){ el.innerHTML = `<div class="empty-note">Henüz koli okutulmadı.</div>`; return; }
-  el.innerHTML = session.koliler.map(k=>{
+  el.innerHTML = session.koliler.map((k,i)=>{
     const sip = k.orderNo ? siparisler[k.orderNo] : null;
     return `<div class="koli-card">
       <div class="top"><b>${k.barkod}</b><span class="tag ${k.tip==='kurye'?'tag-kurye':'tag-eir'}">${k.tip==='kurye'?'Kurye':'e-İrsaliye'}</span></div>
       <div class="meta">${sip ? sip.tedarikci+' — '+k.orderNo : 'Sipariş bağlantısı yok'}</div>
       <div class="meta">${k.urunler.length} ürün okutuldu</div>
+      <button class="btn btn-secondary" style="margin-top:8px; padding:9px;" onclick="reopenKoli(${i})">↺ Koliyi Yeniden Aç</button>
     </div>`;
   }).join('');
 }
 
+async function reopenKoli(index){
+  const koli = session.koliler[index];
+  if(!koli) return;
+  if(current.koli){ toast('Önce açık koliyi kapatın.'); return; }
+  if(!confirm(koli.barkod+' kolisini yeniden açmak istiyor musunuz?')) return;
+  session.koliler.splice(index,1);
+  current.koli = koli;
+  current.orderNo = koli.orderNo;
+  current.pendingIdentifiers = null;
+  current.aktifUrun = null;
+  await dbUpdateKoliDurum(koli.id, 'acik');
+  document.getElementById('siparisInfoBar').innerHTML = infoBarHtml(current.orderNo, current.koli, null);
+  setUrunMode('idle', 'Koli yeniden açıldı — ürün barkodu okutun');
+  showScreen('urun-girisi');
+}
+
 /* ================= SİPARİŞ KONTROL ================= */
-function renderSiparisGroupList(){
-  const el = document.getElementById('siparisGroupList');
+function dbRowToLocalKoli(row){
+  return {
+    barkod: row.barkod, tip: row.tip, orderNo: row.siparis_no,
+    urunler: (row.koli_urunler||[]).map(u=>({ id:u.id, gtin:u.gtin, ad:u.ad, identifiers:u.identifiers||{}, beklenmeyen:u.beklenmeyen }))
+  };
+}
+function groupKolilerByOrder(kolilerList){
   const groups = {};
-  session.koliler.forEach(k=>{
+  kolilerList.forEach(k=>{
     const key = k.orderNo || '__kurye__';
     if(!groups[key]) groups[key] = [];
     groups[key].push(k);
   });
+  return groups;
+}
+function renderGroupListHtml(groups, tamamlananMap){
+  const el = document.getElementById('siparisGroupList');
   const keys = Object.keys(groups);
   if(keys.length===0){ el.innerHTML = `<div class="empty-note">Henüz sipariş yok.</div>`; return; }
   el.innerHTML = keys.map(key=>{
@@ -651,13 +977,37 @@ function renderSiparisGroupList(){
       </div>`;
     }
     const sip = siparisler[key];
-    const tamamlandi = siparisTamamlandi[key];
+    if(!sip) return '';
+    const tamamlandi = tamamlananMap[key];
+    // İlerleme: okutulan / beklenen
+    let girilen = 0, beklenen = 0;
+    const sayim = {};
+    groups[key].forEach(k=>k.urunler.forEach(u=>{ sayim[u.gtin]=(sayim[u.gtin]||0)+1; }));
+    (sip.kalemler||[]).forEach(kl=>{ beklenen += kl.beklenen||0; girilen += Math.min(sayim[kl.gtin]||0, kl.beklenen||0); });
+    const pct = beklenen ? Math.round(girilen/beklenen*100) : 0;
+    const pctColor = pct>=100 ? 'var(--ok)' : pct>0 ? 'var(--warn)' : 'var(--line)';
     return `<div class="order-card" onclick="openSiparisDetay('${key}')">
       <div class="name">${sip.tedarikci}</div>
       <div class="meta">Sipariş: ${key} — İrsaliye: ${sip.irsaliyeNo}<br>${groups[key].length} koli okutuldu</div>
+      ${beklenen ? `<div class="meta" style="margin-top:6px;">Giriş: <b>${girilen} / ${beklenen}</b> (%${pct})
+        <div style="background:var(--panel-2);border-radius:5px;height:6px;overflow:hidden;margin-top:4px;">
+          <div style="height:100%;width:${Math.min(pct,100)}%;background:${pctColor};"></div>
+        </div></div>` : ''}
       ${tamamlandi ? `<div class="done-badge">✓ Tamamlandı — Kayıt No: ${tamamlandi.kayitNo}</div>` : ''}
     </div>`;
   }).join('');
+}
+function renderSiparisGroupList(){
+  // 1) Anında: bu cihazda şimdiye kadar okutulanlarla göster
+  renderGroupListHtml(groupKolilerByOrder(session.koliler), siparisTamamlandi);
+  // 2) Arka planda: DB'den TÜM cihazların verisiyle güncelle (varsa)
+  if(db){
+    Promise.all([dbFetchAllKoliGroups(), dbFetchTamamlanan()]).then(([rows, tamamlananMap])=>{
+      siparisTamamlandi = tamamlananMap;
+      const kolilerList = rows.map(dbRowToLocalKoli);
+      renderGroupListHtml(groupKolilerByOrder(kolilerList), tamamlananMap);
+    });
+  }
 }
 
 function openSiparisDetay(orderNo){
@@ -680,7 +1030,20 @@ function renderDetay(){
     ? `<div><b>${sip.tedarikci}</b></div><div>Sipariş: ${aktifDetayOrderNo} — İrsaliye: ${sip.irsaliyeNo}</div>`
     : `<div><span class="tag tag-kurye">TEDARİKÇİSİZ</span> Kurye kolileri</div>`;
 
-  const kolilerBu = session.koliler.filter(k => (k.orderNo||null) === aktifDetayOrderNo);
+  // 1) Anında: bu cihazın yerel verisiyle çiz
+  const kolilerLocal = session.koliler.filter(k => (k.orderNo||null) === aktifDetayOrderNo);
+  renderDetayList(kolilerLocal, sip);
+
+  // 2) Arka planda: DB'den tüm cihazların verisiyle güncelle
+  if(db){
+    dbFetchKolilerForOrder(aktifDetayOrderNo).then(rows=>{
+      const kolilerDb = rows.map(dbRowToLocalKoli);
+      renderDetayList(kolilerDb, sip);
+    });
+  }
+}
+
+function renderDetayList(kolilerBu, sip){
   const sayim = {}; // gtin -> {count, ad, koliRefs:[]}
   kolilerBu.forEach(koli=>{
     koli.urunler.forEach(u=>{
@@ -722,9 +1085,12 @@ function renderDetay(){
   }
 }
 
-function tamamlaSiparis(){
+async function tamamlaSiparis(){
   const kayitNo = 'KYT-'+Math.floor(100000+Math.random()*900000);
   if(aktifDetayOrderNo) siparisTamamlandi[aktifDetayOrderNo] = { kayitNo, zaman:new Date().toLocaleString('tr-TR') };
+  const ok = await dbUpsertTamamlandi(aktifDetayOrderNo, kayitNo);
+  if(!ok && db) enqueueOp({ t:'tamam', orderNo:aktifDetayOrderNo, kayitNo });
+  feedbackOk();
   showModal(`
     <h3>✔ Sipariş Tamamlandı</h3>
     <p style="font-size:13px; color:#5c564b;">Bu numarayı irsaliye üzerine not ederek saklayın.</p>
@@ -752,6 +1118,9 @@ function enterTutanakScreen(){
 
   tutanakSatirGecici = [];
   tutanakDurumSecili = null;
+  tutanakFotoFile = null;
+  document.getElementById('tutanakFotoPreview').innerHTML='';
+  document.getElementById('tutanakFotoInput').value='';
   document.querySelectorAll('.durum-btns button').forEach(b=>b.classList.remove('active'));
   document.getElementById('tutanakTaslakArea').innerHTML = '';
   renderTutanakSatirlar();
@@ -763,14 +1132,40 @@ function setDurum(d){
   document.querySelector('.sel-'+d).classList.add('active');
 }
 
-function addTutanakSatir(){
+let tutanakFotoFile = null;
+function handleTutanakFotoSelect(e){
+  const file = e.target.files[0];
+  if(!file) return;
+  tutanakFotoFile = file;
+  const url = URL.createObjectURL(file);
+  document.getElementById('tutanakFotoPreview').innerHTML = `<img src="${url}" style="max-width:120px; border-radius:8px; border:1px solid var(--line);">`;
+}
+
+async function addTutanakSatir(){
   const gtin = document.getElementById('tutanakArtikelSelect').value;
   const adet = parseInt(document.getElementById('tutanakAdet').value) || 1;
   const aciklama = document.getElementById('tutanakAciklama').value.trim();
   if(!tutanakDurumSecili){ toast('Lütfen durum seçin (Eksik/Fazla/Hasarlı).'); return; }
   const u = urunKatalog[gtin];
-  tutanakSatirGecici.push({ gtin, artikel:u?u.artikel:gtin, ad:u?u.ad:gtin, durum:tutanakDurumSecili, adet, aciklama });
+  const satir = { gtin, artikel:u?u.artikel:gtin, ad:u?u.ad:gtin, durum:tutanakDurumSecili, adet, aciklama, foto:null };
+
+  if(tutanakFotoFile && db){
+    toast('Fotoğraf yükleniyor...');
+    const path = Date.now()+'_'+Math.random().toString(36).slice(2)+'.jpg';
+    const { error } = await db.storage.from('tutanak-fotograflari').upload(path, tutanakFotoFile);
+    if(!error){
+      const { data } = db.storage.from('tutanak-fotograflari').getPublicUrl(path);
+      satir.foto = data.publicUrl;
+    } else {
+      toast('Fotoğraf yüklenemedi, satır fotoğrafsız eklendi.');
+    }
+  }
+
+  tutanakSatirGecici.push(satir);
   document.getElementById('tutanakAciklama').value='';
+  document.getElementById('tutanakFotoPreview').innerHTML='';
+  document.getElementById('tutanakFotoInput').value='';
+  tutanakFotoFile = null;
   renderTutanakSatirlar();
 }
 
@@ -782,7 +1177,7 @@ function renderTutanakSatirlar(){
   const durumEtiket = {eksik:'EKSİK', fazla:'FAZLA', hasarli:'HASARLI'};
   el.innerHTML = tutanakSatirGecici.map((s,i)=>`
     <div class="tutanak-satir">
-      <div><b>${durumEtiket[s.durum]}</b> — ${s.artikel} — ${s.adet} adet ${s.aciklama? '('+s.aciklama+')':''}</div>
+      <div><b>${durumEtiket[s.durum]}</b> — ${s.artikel} — ${s.adet} adet ${s.aciklama? '('+s.aciklama+')':''} ${s.foto?'📷':''}</div>
       <span class="del" onclick="removeTutanakSatir(${i})">✕</span>
     </div>`).join('');
 }
@@ -806,8 +1201,9 @@ function showTutanakTaslak(){
   document.getElementById('tutanakTaslakArea').innerHTML = html;
 }
 
-function onaylaTutanak(){
+async function onaylaTutanak(){
   const tutanakNo = 'TUT-'+Math.floor(100000+Math.random()*900000);
+  await dbInsertTutanak(aktifDetayOrderNo, tutanakNo, tutanakSatirGecici);
   showModal(`
     <h3>✔ Tutanak Oluşturuldu</h3>
     <p style="font-size:13px; color:#5c564b;">Bu numarayı irsaliye üzerine not ederek saklayın.</p>
@@ -1066,7 +1462,7 @@ async function openCameraMultiScan(){
   }catch(e){ toast('Kameraya erişilemedi: '+e.message); }
 }
 
-function finalizeMultiScan(result){
+async function finalizeMultiScan(result){
   if(!current.koli) return;
   const identifiers = {};
   if(result.imei1) identifiers.IMEI1 = result.imei1;
@@ -1077,7 +1473,11 @@ function finalizeMultiScan(result){
     const urun = urunKatalog[result.ean];
     if(urun){
       current.aktifUrun = { gtin: result.ean, ad: urun.ad, requiredIds: urun.requiredIds };
-      current.koli.urunler.push({ gtin: result.ean, ad: urun.ad, identifiers, beklenmeyen:false });
+      const kayit = { gtin: result.ean, ad: urun.ad, identifiers, beklenmeyen:false };
+      current.koli.urunler.push(kayit);
+      renderKoliUrunList();
+      const saved = await dbInsertKoliUrun(current.koli.id, kayit);
+      if(saved) kayit.id = saved.id;
       current.pendingIdentifiers = null;
       setUrunMode('ok', urun.ad+' eklendi ✓');
       renderKoliUrunList();
@@ -1086,13 +1486,21 @@ function finalizeMultiScan(result){
       if(sipForKoli && sipForKoli.kalemler && sipForKoli.kalemler.length>0){
         showUrunEslestirmeModal(result.ean, sipForKoli, identifiers);
       } else {
-        current.koli.urunler.push({ gtin:'BEKLENMEYEN-'+result.ean, ad:'Beklenmeyen ürün ('+result.ean+')', identifiers, beklenmeyen:true });
+        const kayit = { gtin:'BEKLENMEYEN-'+result.ean, ad:'Beklenmeyen ürün ('+result.ean+')', identifiers, beklenmeyen:true };
+        current.koli.urunler.push(kayit);
+        renderKoliUrunList();
+        const saved = await dbInsertKoliUrun(current.koli.id, kayit);
+        if(saved) kayit.id = saved.id;
         setUrunMode('wait', 'Beklenmeyen ürün kaydedildi ⚠️');
         renderKoliUrunList();
       }
     }
   } else if(current.aktifUrun){
-    current.koli.urunler.push({ gtin: current.aktifUrun.gtin, ad: current.aktifUrun.ad, identifiers, beklenmeyen:false });
+    const kayit = { gtin: current.aktifUrun.gtin, ad: current.aktifUrun.ad, identifiers, beklenmeyen:false };
+    current.koli.urunler.push(kayit);
+    renderKoliUrunList();
+    const saved = await dbInsertKoliUrun(current.koli.id, kayit);
+    if(saved) kayit.id = saved.id;
     setUrunMode('ok', current.aktifUrun.ad+' eklendi ✓ (aktif ürün kullanıldı)');
     renderKoliUrunList();
   } else {
@@ -1115,7 +1523,7 @@ async function openCamera(mode){
     closeBtn.className='camera-close'; closeBtn.textContent='✕ Kapat';
     document.body.appendChild(closeBtn);
     const hint = document.createElement('div');
-    hint.className='camera-hint'; hint.textContent = mode==='koli' ? 'Koli barkodunu kadraja alın' : 'Ürün barkodunu kadraja alın';
+    hint.className='camera-hint'; hint.textContent = mode==='koli' ? 'Koli barkodunu kadraja alın' : mode==='sorgu' ? 'Sorgulanacak barkodu kadraja alın' : 'Ürün barkodunu kadraja alın';
     document.body.appendChild(hint);
     const detector = new BarcodeDetector();
     let stop=false;
@@ -1128,7 +1536,7 @@ async function openCamera(mode){
           if(codes.length>0){
             const val = codes[0].rawValue;
             cleanup();
-            if(mode==='koli') handleKoliScan(val); else handleProductScan(val);
+            if(mode==='koli') handleKoliScan(val); else if(mode==='sorgu') sorgulaUrun(val); else handleProductScan(val);
             break;
           }
         }catch(e){}
@@ -1265,7 +1673,39 @@ function renderAll(){
   if(active==='tutanak') enterTutanakScreen();
 }
 
-renderAll();
+(async function init(){
+  renderAll();
+  updatePendingBadge();
+  if(db){
+    toast('Veritabanına bağlanılıyor...');
+    await loadFromDB();
+    siparisTamamlandi = await dbFetchTamamlanan();
+    renderAll();
+    toast('Bağlantı hazır ✓');
+    flushPending();
+    setInterval(flushPending, 20000); // her 20 sn'de bir bekleyen kayıtları tekrar dene
+
+    // Gerçek zamanlı senkron: başka cihazlar veri yazınca kontrol/detay ekranları kendini günceller
+    let rtTimer = null;
+    function rtRefresh(){
+      clearTimeout(rtTimer);
+      rtTimer = setTimeout(()=>{
+        const active = document.querySelector('.screen.active').id.replace('screen-','');
+        if(active==='siparis-kontrol') renderSiparisGroupList();
+        if(active==='siparis-detay') renderDetay();
+      }, 600); // art arda gelen değişiklikleri tek yenilemede topla
+    }
+    db.channel('rt-depo')
+      .on('postgres_changes', { event:'*', schema:'public', table:'koliler' }, rtRefresh)
+      .on('postgres_changes', { event:'*', schema:'public', table:'koli_urunler' }, rtRefresh)
+      .on('postgres_changes', { event:'*', schema:'public', table:'siparisler' }, async ()=>{ await loadFromDB(); rtRefresh(); })
+      .subscribe();
+  }
+  // PWA: servis çalışanını kaydet (ana ekrana ekleme + çevrimdışı önbellek için)
+  if('serviceWorker' in navigator){
+    navigator.serviceWorker.register('./sw.js').catch(e=>console.warn('SW kayıt hatası:', e));
+  }
+})();
 </script>
 </body>
 </html>
